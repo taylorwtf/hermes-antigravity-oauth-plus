@@ -23,7 +23,7 @@ Auth add is an interactive official-CLI operation and includes a short model pro
 - Audit for core overrides, credential/config files, account snapshots, logs, private filesystem paths, token values, download-and-replace/self-updater code, telemetry, billing changes and approval bypasses.
 - The legacy upstream npm installer is not the fork's installation route; package metadata is private and exposes no binary. Assess/remove legacy distribution files if admission review requires it.
 - Review `process.py` credential fallback and macOS keychain exposure explicitly. Do not mark the catalog security question resolved by a fixture test.
-- Pin one `plugin-catalog/antigravity-oauth-plus.yaml` entry to the final public full SHA; version is `"0.2.0"`, personal maintainer is `taylorwtf`, repo is `https://github.com/taylorwtf/hermes-antigravity-oauth`.
+- Pin one `plugin-catalog/antigravity-oauth-plus.yaml` entry to the final public full SHA; version is `"0.2.0"`, personal maintainer is `taylorwtf`, repo is `https://github.com/taylorwtf/hermes-antigravity-oauth-plus`.
 - No npm publishing. Tags, GitHub releases and catalog submission remain separately authorized owner operations, not CI side effects.
 
 Report vulnerabilities privately to the repository owner through GitHub's available security-reporting channel. Never post credentials, token-file contents or account history in a public issue.

@@ -4,7 +4,7 @@
 
 Google Antigravity via the official CLI, with live model discovery, native context detection and account quota monitoring.
 
-This personal fork is maintained by **taylorwtf**, version **0.2.0**, at <https://github.com/taylorwtf/hermes-antigravity-oauth-plus>. Its plugin and provider ID is `antigravity-oauth-plus`; aliases are `agy-oauth-plus` and `google-antigravity-plus`. It does not replace the upstream `antigravity-oauth`, `google-antigravity` or `agy-oauth` providers. It is not an official Google or Nous Research product; catalog submission is subject to maintainer review.
+This standalone project is maintained by **taylorwtf**, version **0.2.0**, at <https://github.com/taylorwtf/hermes-antigravity-oauth-plus>. Its plugin and provider ID is `antigravity-oauth-plus`; aliases are `agy-oauth-plus` and `google-antigravity-plus`. It does not replace the upstream `antigravity-oauth`, `google-antigravity` or `agy-oauth` providers. It is not an official Google or Nous Research product; catalog submission is subject to maintainer review.
 
 ## Install and select
 
