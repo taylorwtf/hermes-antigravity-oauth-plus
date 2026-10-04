@@ -1,0 +1,17 @@
+{
+  "name": "hermes-antigravity-oauth-plus",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Google Antigravity via the official CLI, with live model discovery, native context detection and account quota monitoring.",
+  "engines": {
+    "node": ">=20"
+  },
+  "author": "taylorwtf",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taylorwtf/hermes-antigravity-oauth-plus.git"
+  },
+  "homepage": "https://github.com/taylorwtf/hermes-antigravity-oauth-plus#readme",
+  "bugs": "https://github.com/taylorwtf/hermes-antigravity-oauth-plus/issues"
+}

@@ -1,0 +1,71 @@
+name: CI
+
+# Verification only: no npm publishing, tags, releases or credentialed agy calls.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HERMES_AGENT_REF: 95db0e2ada43296b19b619f5542262ecbaef9482
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          path: plugin
+      - uses: actions/checkout@v4
+        with:
+          repository: NousResearch/hermes-agent
+          ref: ${{ env.HERMES_AGENT_REF }}
+          path: .hermes-agent
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install pinned Hermes test runtime
+        run: uv sync --project ../.hermes-agent --frozen --no-dev
+      - name: Isolated Python fixture suites
+        env:
+          HERMES_HOME: ${{ runner.temp }}/agy-plus-test-home
+          TMPDIR: ${{ runner.temp }}/agy-plus-temp
+          PYTHONPATH: ${{ github.workspace }}/.hermes-agent:${{ github.workspace }}/plugin
+        run: |
+          set -euo pipefail
+          mkdir -p "$HERMES_HOME" "$TMPDIR"
+          for test in tests/test_*.py; do
+            printf '::group::%s\n' "$test"
+            ../.hermes-agent/.venv/bin/python "$test"
+            printf '::endgroup::\n'
+          done
+      - name: Quota backend and optional widget fixtures
+        run: |
+          set -euo pipefail
+          node --test backend/test/*.test.mjs tests/usage_widget*.test.mjs
+          node --check backend/bin/agy-usage.mjs
+      - name: Catalog admission and security checks
+        env:
+          HERMES_HOME: ${{ runner.temp }}/agy-plus-validation-home
+          TMPDIR: ${{ runner.temp }}/agy-plus-temp
+          PYTHONPATH: ${{ github.workspace }}/.hermes-agent:${{ github.workspace }}/plugin
+        run: |
+          mkdir -p "$HERMES_HOME" "$TMPDIR"
+          ../.hermes-agent/.venv/bin/python -m hermes_cli.main plugins validate . --install-deps --json

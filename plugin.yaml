@@ -1,0 +1,21 @@
+name: antigravity-oauth-plus
+manifest_version: 2
+version: "0.2.0"
+kind: model-provider
+description: "Google Antigravity via the official CLI, with live model discovery, native context detection and account quota monitoring."
+author: taylorwtf
+license: MIT
+homepage: https://github.com/taylorwtf/hermes-antigravity-oauth-plus
+platforms:
+  - linux
+  - macos
+  - windows
+requires_hermes: ">=0.21.5"
+external_dependencies:
+  - command: agy
+  - command: node
+capabilities: []
+provides_tools: []
+provides_hooks: []
+provides_middleware: []
+requires_env: []

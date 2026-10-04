@@ -1,0 +1,10 @@
+{
+  "name": "antigravity-companion-quota-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Dependency-free, guarded Antigravity quota observations; no inference or billing actions",
+  "bin": { "agy-usage": "bin/agy-usage.mjs" },
+  "scripts": { "test": "node --test test/usage.test.mjs" },
+  "engines": { "node": ">=20" }
+}
