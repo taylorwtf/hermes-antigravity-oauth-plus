@@ -153,8 +153,11 @@ def parse_complete_catalog(text):
             continue
         if re.fullmatch(r"(?i)(?:model(?:\s+id)?)(?:\s+(?:name|description|family))?", line):
             continue
-        model_id = line.split()[0]
-        if len(model_id) > 128 or not CATALOG_ID.fullmatch(model_id) or model_id.lower().rstrip(":") in _DIAGNOSTIC_IDS:
+        fields = raw.split("\t")
+        model_id = fields[0]
+        if len(fields) >= 2 and model_id.lower() in {"id", "model", "model id", "model_id"}:
+            continue
+        if len(fields) < 2 or not any(field.strip() for field in fields[1:]) or len(model_id) > 128 or not CATALOG_ID.fullmatch(model_id) or model_id.lower().rstrip(":") in _DIAGNOSTIC_IDS:
             # Unknown/truncated output must not masquerade as removals.
             raise DiagnosticError("CATALOG_INCOMPLETE")
         ids.add(model_id)

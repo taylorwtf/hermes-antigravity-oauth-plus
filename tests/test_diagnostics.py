@@ -31,7 +31,7 @@ class DiagnosticsTests(unittest.TestCase):
             rc = d.main(list(args))
         return rc, json.loads(output.getvalue())
 
-    def fake_run(self, text="gemini-next-high Gemini\nnext-model-1 Display\n", rc=0, error=None):
+    def fake_run(self, text="gemini-next-high\tGemini\nnext-model-1\tDisplay\n", rc=0, error=None):
         def run(argv, **kwargs):
             if error:
                 raise error
@@ -99,7 +99,7 @@ class DiagnosticsTests(unittest.TestCase):
         if os.name != "nt":
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
-        with patch.object(d.subprocess, "run", side_effect=self.fake_run("next-model-1 Name\nbrand-new-2 New\n")):
+        with patch.object(d.subprocess, "run", side_effect=self.fake_run("next-model-1\tName\nbrand-new-2\tNew\n")):
             rc, second = self.run_cli("refresh-models", "--json")
         self.assertEqual(second["catalog_change"], {"compared": True, "added": ["brand-new-2"], "removed": ["gemini-next-high"]})
         with patch.object(d.subprocess, "run", side_effect=AssertionError("cached")):
@@ -112,7 +112,7 @@ class DiagnosticsTests(unittest.TestCase):
             self.run_cli("refresh-models", "--json")
         path = self.home / "plugin-data" / "antigravity-oauth-plus" / "model-catalog.json"
         before = path.read_bytes()
-        cases = [self.fake_run("next-model-1\n", rc=1), self.fake_run("next-model-1\nWarning: partial catalog\n"), self.fake_run(""), self.fake_run(error=subprocess.TimeoutExpired("PRIVATE-PATH", 10))]
+        cases = [self.fake_run("next-model-1\tName\n", rc=1), self.fake_run("next-model-1\tName\nWarning: partial catalog\n"), self.fake_run(""), self.fake_run(error=subprocess.TimeoutExpired("PRIVATE-PATH", 10))]
         for run in cases:
             with patch.object(d.subprocess, "run", side_effect=run):
                 rc, result = self.run_cli("refresh-models", "--json")
@@ -121,6 +121,41 @@ class DiagnosticsTests(unittest.TestCase):
             self.assertFalse(result["catalog_change"]["compared"])
             self.assertEqual(result["catalog_change"]["removed"], [])
             self.assertNotIn("PRIVATE-PATH", json.dumps(result))
+
+    def test_malformed_successful_output_preserves_previous_snapshot(self):
+        valid = "gemini-3.8-flash-high\tGemini\nnext-model-1\tDisplay\n"
+        with patch.object(d.subprocess, "run", side_effect=self.fake_run(valid)):
+            rc, baseline = self.run_cli("refresh-models", "--json")
+        self.assertEqual(rc, 0)
+        path = self.home / "plugin-data" / "antigravity-oauth-plus" / "model-catalog.json"
+        before = path.read_bytes()
+        malformed = (
+            "Service unavailable",
+            "Unauthorized",
+            "gemini-3.8-flash-high\tGemini\nService unavailable",
+            " gemini-3.8-flash-high\tGemini",
+            "gemini-3.8-flash-high \tGemini",
+            "gemini-3.8-flash-high Gemini",
+            "gemini-3.8-flash-high\t ",
+            "gemini-3.8-flash-high\tGemini\nnext-model-1\t",
+            "",
+            "Fetching models...\nModel ID\tName\n---\n",
+        )
+        for text in malformed:
+            with self.subTest(text=text):
+                with patch.object(d.subprocess, "run", side_effect=self.fake_run(text, rc=0)):
+                    rc, result = self.run_cli("refresh-models", "--json")
+                self.assertEqual(rc, 1)
+                self.assertEqual(result["error"], "CATALOG_INCOMPLETE")
+                self.assertEqual(path.read_bytes(), before)
+                self.assertEqual(result["discovery"]["model_ids"], baseline["discovery"]["model_ids"])
+                self.assertEqual(result["discovery"]["observed_at"], baseline["discovery"]["observed_at"])
+                self.assertEqual(result["catalog_change"], {"compared": False, "added": [], "removed": []})
+
+    def test_catalog_table_headers_progress_deduplication_and_id_bound(self):
+        bounded = "a" * 128
+        rows = f"Fetching available models...\nModel ID\tName\n---\nZ:model/next@v2+beta\tFuture model\n{bounded}\tBounded\nZ:model/next@v2+beta\tDuplicate\n"
+        self.assertEqual(d.parse_complete_catalog(rows), sorted([bounded, "Z:model/next@v2+beta"]))
 
     def test_catalog_symlink_is_refused(self):
         root = self.home / "plugin-data" / "antigravity-oauth-plus"
