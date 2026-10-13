@@ -1,6 +1,6 @@
 name: antigravity-oauth-plus
 manifest_version: 2
-version: "0.2.0"
+version: "0.2.1"
 kind: model-provider
 description: "Google Antigravity via the official CLI, with live model discovery, native context detection and account quota monitoring."
 author: taylorwtf

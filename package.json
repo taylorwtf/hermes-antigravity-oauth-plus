@@ -1,6 +1,6 @@
 {
   "name": "hermes-antigravity-oauth-plus",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Google Antigravity via the official CLI, with live model discovery, native context detection and account quota monitoring.",
   "engines": {

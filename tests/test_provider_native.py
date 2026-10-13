@@ -101,7 +101,7 @@ class NativeProviderTests(unittest.TestCase):
         self.assertNotIn("node", result.unavailable_reason)
 
     def test_live_models_preserve_new_families_and_reject_headers(self):
-        output = "Fetching models...\nMODEL ID\nnext-family-1.2 Name\ngemini-next-high Gemini\ngemini-next-low Gemini\nError: failed\n--not-a-model\n"
+        output = "Fetching available models...\nMODEL ID\tNAME\nnext-family-1.2\tName\ngemini-next-high\tGemini\ngemini-next-low\tGemini\n"
         with patch(NAME + ".client.resolve_agy_command", return_value="fixture-agy"), patch.object(module.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout=output)) as run:
             self.assertEqual(profile.fetch_models(), ["next-family-1.2", "gemini-next-high", "gemini-next-low"])
         self.assertEqual(run.call_args.args[0], ["fixture-agy", "models"])

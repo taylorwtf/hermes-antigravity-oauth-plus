@@ -44,7 +44,8 @@ class DiagnosticsTests(unittest.TestCase):
             rc, result = self.run_cli("status", "--json")
         self.assertEqual(rc, 0)
         self.assertEqual(result["requested_model"], "gemini-3.1-pro")
-        self.assertEqual(result["executable_model_id"], "gemini-3.1-pro-low")
+        self.assertEqual(result["executable_model_id"], "gemini-3.1-pro")
+        self.assertEqual(result["executable_effort"], "low")
         self.assertFalse((self.home / "plugin-data").exists())
         self.assertEqual(result["context"]["source"], "native-resolution/source-unspecified")
         self.assertNotIn("DO-NOT-EXPORT", json.dumps(result))
@@ -167,6 +168,28 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertIn("Context: unknown", text)
         self.assertIn("effective threshold unknown", text)
         self.assertNotIn("DO-NOT-EXPORT", text)
+
+    def test_native_ids_are_exact_cached_and_bounded(self):
+        ids = ["nova:preview/next@v2+beta", "Future-Model", "future-model", "gemini-future-max"]
+        with patch.object(d.subprocess, "run", side_effect=self.fake_run("\n".join(f"{model}\tName" for model in ids))):
+            rc, result = self.run_cli("refresh-models", "--model", ids[0], "--json")
+        self.assertEqual(rc, 0)
+        self.assertEqual(result["discovery"]["model_ids"], sorted(ids))
+        with patch.object(d.subprocess, "run", side_effect=AssertionError("status must stay cached")):
+            for model in ids:
+                rc, status = self.run_cli("status", "--model", model, "--effort", "max", "--json")
+                self.assertEqual(rc, 0)
+                self.assertEqual(status["executable_model_id"], model)
+                self.assertIsNone(status["executable_effort"])
+                self.assertFalse(status["routing_changed"])
+        rc, invalid = self.run_cli("status", "--model", "a" * 129, "--json")
+        self.assertEqual(rc, 2)
+        self.assertEqual(invalid["error"], "INVALID_MODEL")
+        with self.assertRaises(d.DiagnosticError):
+            d.parse_complete_catalog("a" * 129 + "\tName")
+        for text in ("ERROR\tpartial", "Warning:\tpartial", "failed\tpartial"):
+            with self.subTest(text=text), self.assertRaises(d.DiagnosticError):
+                d.parse_complete_catalog(text)
 
     def test_invalid_exact_model_is_not_normalized(self):
         rc, result = self.run_cli("status", "--model", " next-model-1", "--json")

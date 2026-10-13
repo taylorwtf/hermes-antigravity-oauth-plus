@@ -52,6 +52,23 @@ _pkg_spec.loader.exec_module(_pkg)
 _CLOCK_JUMP_SECONDS = 10 ** 6
 
 
+# CLI-shaped offline table fixtures, not an account availability snapshot.
+_CLI_MODEL_IDS = [
+    "gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low",
+    "claude-opus-5-5-low", "claude-opus-5-5-medium", "claude-opus-5-5-high",
+    "claude-sonnet-5-5-low", "claude-sonnet-5-5-medium", "claude-sonnet-5-5-high",
+    "gpt-oss-120b-medium",
+]
+_FUTURE_MODEL_IDS = [
+    "gemini-future-pro-max", "claude-future-opus-xhigh", "orion-2-reasoner-max",
+    "nova:preview/next@v2", "Future-Model", "future-model",
+]
+
+
+def _model_table(ids):
+    return "\n".join(f"{model}\tFixture display name" for model in ids) + "\n"
+
+
 class AntigravityPluginTests(unittest.TestCase):
     def setUp(self):
         # The suite must not depend on host state. Three host facts leak in
@@ -608,59 +625,193 @@ class AntigravityPluginTests(unittest.TestCase):
             self.assertEqual(finish_chunks[0].choices[0].finish_reason, "tool_calls")
 
     def test_base_model_and_effort_resolution(self):
-        # TemporaryDirectory (not /tmp): on Windows "/tmp" resolves to a
-        # drive-rooted \tmp with no guaranteed write access, and an
-        # explicit cwd is never cleaned by close() — addCleanup removes it.
-        tmp_dir = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp_dir.cleanup)
-        client = AntigravityClient(cwd=tmp_dir.name)
-        # Base model + explicit effort
-        self.assertEqual(client._resolve_model_and_effort("gemini-3.8-flash", "low"), ("gemini-3.8-flash-low", "low"))
-        self.assertEqual(client._resolve_model_and_effort("gemini-3.8-flash", "medium"), ("gemini-3.8-flash-medium", "medium"))
-        self.assertEqual(client._resolve_model_and_effort("gemini-3.8-flash", "high"), ("gemini-3.8-flash-high", "high"))
-        self.assertEqual(client._resolve_model_and_effort("gemini-3.8-flash", "max"), ("gemini-3.8-flash-high", "high"))
-        self.assertEqual(client._resolve_model_and_effort("gemini-3.8-flash", "none"), ("gemini-3.8-flash-low", "low"))
+        from models import resolve_model_and_effort
 
-        # gemini-3.1-pro has only low and high
-        self.assertEqual(client._resolve_model_and_effort("gemini-3.1-pro", "low"), ("gemini-3.1-pro-low", "low"))
-        self.assertEqual(client._resolve_model_and_effort("gemini-3.1-pro", "medium"), ("gemini-3.1-pro-high", "high"))
-        self.assertEqual(client._resolve_model_and_effort("gemini-3.1-pro", "high"), ("gemini-3.1-pro-high", "high"))
-
-        # Suffix override: model had -high but effort was set to low
-        self.assertEqual(client._resolve_model_and_effort("gemini-3.8-flash-high", "low"), ("gemini-3.8-flash-low", "low"))
-
-        # Non-gemini model
-        # agy rejects --effort for claude-* ("--effort is not supported for model"), so none is sent.
-        self.assertEqual(client._resolve_model_and_effort("claude-sonnet-4-6", "high"), ("claude-sonnet-4-6", None))
+        # Manual suffixless Gemini requests use the official generic flag,
+        # never a fabricated effort-suffixed ID or a generation-specific table.
+        for model in ("gemini-3.8-flash", "gemini-3.1-pro", "gemini-future-pro"):
+            for effort in ("low", "medium", "high", "xhigh", "max"):
+                with self.subTest(model=model, effort=effort):
+                    self.assertEqual(resolve_model_and_effort(model, effort), (model, effort))
+            self.assertEqual(resolve_model_and_effort(model, "none"), (model, "low"))
+            self.assertEqual(resolve_model_and_effort(model, "invalid"), (model, None))
+        for model in _CLI_MODEL_IDS + _FUTURE_MODEL_IDS:
+            self.assertEqual(resolve_model_and_effort(model, "low"), (model, None))
+        for model in ("claude-sonnet-5-5", "gpt-oss-120b", "sonnet", "flash", "default"):
+            self.assertEqual(resolve_model_and_effort(model, "high"), (model, None))
+        with patch("hermes_cli.config.load_config_readonly", return_value={"agent": {"reasoning_effort": "high"}}) as config:
+            self.assertEqual(resolve_model_and_effort("gemini-future-flash"), ("gemini-future-flash", None))
+            self.assertEqual(resolve_model_and_effort(None), ("", None))
+            config.assert_not_called()
 
     def test_profile_supported_reasoning_efforts(self):
         profile = get_provider_profile("antigravity-oauth-plus")
-        self.assertEqual(profile.supported_reasoning_efforts("gemini-3.8-flash"), ("low", "medium", "high"))
-        self.assertEqual(profile.supported_reasoning_efforts("gemini-3.1-pro"), ("low", "high"))
-        self.assertEqual(profile.supported_reasoning_efforts("gpt-oss-120b-medium"), ())
+        assert profile is not None
+        for model in ("gemini-3.8-flash", "gemini-3.1-pro", "gemini-future-pro"):
+            self.assertEqual(profile.supported_reasoning_efforts(model), ("low", "medium", "high", "xhigh", "max"))
+        for model in _CLI_MODEL_IDS + _FUTURE_MODEL_IDS + ["claude-sonnet-5-5", None]:
+            with self.subTest(model=model):
+                self.assertEqual(profile.supported_reasoning_efforts(model), ())
+                self.assertEqual(profile.build_api_kwargs_extras(model=model, reasoning_config={"effort": "low"}), ({}, {}))
+                self.assertEqual(profile.build_api_kwargs_extras(model=model, reasoning_config={"enabled": False}), ({}, {}))
+        self.assertEqual(profile.build_api_kwargs_extras(model="gemini-future-pro", reasoning_config={"effort": "max"}), ({}, {"reasoning_effort": "max"}))
 
-    def test_fetch_models_clean_base_names(self):
+    def test_native_model_id_reaches_worker_and_oneshot_argv_verbatim(self):
         profile = get_provider_profile("antigravity-oauth-plus")
-        fixture = SimpleNamespace(returncode=0, stdout="gemini-3.8-flash-high Gemini\ngemini-3.8-flash-medium Gemini\ngemini-3.1-pro-high Gemini\n")
-        with patch("antigravity_plugin_entry.subprocess.run", return_value=fixture), patch("client.resolve_agy_command", return_value="agy"):
-            models = profile.fetch_models()
-        self.assertIsNotNone(models)
-        # Verify deduplicated clean base names
-        self.assertIn("gemini-3.8-flash", models)
-        self.assertIn("gemini-3.1-pro", models)
-        self.assertNotIn("gemini-3.8-flash-high", models)
-        self.assertNotIn("gemini-3.8-flash-medium", models)
+        assert profile is not None
+        for model in _CLI_MODEL_IDS + _FUTURE_MODEL_IDS:
+            for oneshot in (False, True):
+                with self.subTest(model=model, oneshot=oneshot), tempfile.TemporaryDirectory() as tmp:
+                    client = AntigravityClient(cwd=tmp)
+                    if oneshot:
+                        self.assertTrue(client._worker_lock.acquire(blocking=False))
+                    events = [json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "fixture answer"}})]
+                    proc = self._scripted_proc(events, alive=False)
+                    try:
+                        with patch("subprocess.Popen", return_value=proc) as popen, self._stubbed_kill_path(), patch("hermes_cli.config.load_config_readonly", return_value={"agent": {"reasoning_effort": "low"}}):
+                            _, extras = profile.build_api_kwargs_extras(model=model, reasoning_config={"effort": "low"})
+                            extras["reasoning_effort"] = "low"  # Also defend direct client callers.
+                            client.chat.completions.create(model=model, messages=[{"role": "user", "content": "fixture"}], stream=False, **extras)
+                            argv = popen.call_args.args[0]
+                            self.assertEqual(argv[argv.index("--model") + 1], model)
+                            self.assertNotIn("--effort", argv)
+                    finally:
+                        if oneshot:
+                            client._worker_lock.release()
+                        client.close()
+
+    def test_generic_effort_reaches_worker_and_oneshot_unchanged(self):
+        for oneshot in (False, True):
+            with self.subTest(oneshot=oneshot), tempfile.TemporaryDirectory() as tmp:
+                client = AntigravityClient(cwd=tmp)
+                if oneshot:
+                    self.assertTrue(client._worker_lock.acquire(blocking=False))
+                proc = self._scripted_proc([json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "fixture"}})], alive=False)
+                try:
+                    with patch("subprocess.Popen", return_value=proc) as popen, self._stubbed_kill_path():
+                        client.chat.completions.create(model="gemini-future-pro", reasoning_effort="max", messages=[{"role": "user", "content": "fixture"}], stream=False)
+                        argv = popen.call_args.args[0]
+                        self.assertEqual(argv[argv.index("--model") + 1], "gemini-future-pro")
+                        self.assertEqual(argv[argv.index("--effort") + 1], "max")
+                finally:
+                    if oneshot:
+                        client._worker_lock.release()
+                    client.close()
+
+    def test_fetch_models_preserves_live_ids_and_only_exact_deduplicates(self):
+        profile = get_provider_profile("antigravity-oauth-plus")
+        assert profile is not None
+        ids = _CLI_MODEL_IDS + _FUTURE_MODEL_IDS
+        output = "Fetching available models...\nMODEL ID\tNAME\n" + _model_table(ids + ids[:2])
+        result = subprocess.CompletedProcess(["agy", "models"], 0, output, "Fetching available models...\n")
+        with patch("antigravity_plugin_entry.client.resolve_agy_command", return_value="fixture-agy"), patch.object(_pkg.subprocess, "run", return_value=result) as run:
+            self.assertEqual(profile.fetch_models(timeout=4.0), ids)
+        run.assert_called_once_with(["fixture-agy", "models"], capture_output=True, text=True, timeout=4.0, stdin=subprocess.DEVNULL, check=False)
+
+    def test_fetch_models_errors_never_invent_a_catalog(self):
+        profile = get_provider_profile("antigravity-oauth-plus")
+        assert profile is not None
+        valid = _model_table(_CLI_MODEL_IDS)
+        cases = [
+            subprocess.CompletedProcess(["agy", "models"], 1, valid, "Error: unavailable"),
+            subprocess.CompletedProcess(["agy", "models"], 0, "Error: model discovery failed\n", ""),
+            subprocess.CompletedProcess(["agy", "models"], 0, "ERROR\tmodel discovery failed\n", ""),
+            subprocess.CompletedProcess(["agy", "models"], 0, "Error:\tmodel discovery failed\n", ""),
+            subprocess.CompletedProcess(["agy", "models"], 0, "Fetching available models...\n", ""),
+            subprocess.CompletedProcess(["agy", "models"], 0, "gemini-future-flash model error\n", ""),
+            subprocess.CompletedProcess(["agy", "models"], 0, "gemini-future-flash\t\n", ""),
+            subprocess.CompletedProcess(["agy", "models"], 0, " gemini-future-flash\tName\n", ""),
+            subprocess.CompletedProcess(["agy", "models"], 0, valid + "malformed output\n", ""),
+            subprocess.TimeoutExpired(["agy", "models"], 4),
+            FileNotFoundError("fixture missing binary"),
+        ]
+        for result in cases:
+            kwargs = {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
+            with self.subTest(result=result), patch("antigravity_plugin_entry.client.resolve_agy_command", return_value="fixture-agy"), patch.object(_pkg.subprocess, "run", **kwargs):
+                self.assertIsNone(profile.fetch_models())
+        with patch("antigravity_plugin_entry.client.resolve_agy_command", side_effect=OSError("fixture resolution failed")):
+            self.assertIsNone(profile.fetch_models())
+
+    def test_fetch_models_successful_empty_is_distinct_from_failure(self):
+        profile = get_provider_profile("antigravity-oauth-plus")
+        assert profile is not None
+        for output in ("", "\n", "ID\tNAME\n", "Fetching available models...\nID\tNAME\n"):
+            result = subprocess.CompletedProcess(["agy", "models"], 0, output, "")
+            with self.subTest(output=output), patch("antigravity_plugin_entry.client.resolve_agy_command", return_value="fixture-agy"), patch.object(_pkg.subprocess, "run", return_value=result):
+                self.assertEqual(profile.fetch_models(), [])
+
+    def test_actual_picker_does_not_merge_unavailable_fallback_models(self):
+        from hermes_cli.models import merge_profile_catalog, provider_model_ids
+
+        profile = get_provider_profile("antigravity-oauth-plus")
+        assert profile is not None
+        self.assertEqual(profile.fallback_models, ())
+        self.assertEqual(profile.default_aux_model, "")
+        self.assertEqual(merge_profile_catalog(profile.name, profile, _CLI_MODEL_IDS), _CLI_MODEL_IDS)
+        self.assertIsNone(merge_profile_catalog(profile.name, profile, None))
+        result = subprocess.CompletedProcess(["agy", "models"], 0, _model_table(_CLI_MODEL_IDS), "")
+        with patch("antigravity_plugin_entry.client.resolve_agy_command", return_value="fixture-agy"), patch.object(_pkg.subprocess, "run", return_value=result) as run:
+            self.assertEqual(provider_model_ids(profile.name, force_refresh=True), _CLI_MODEL_IDS)
+            run.assert_called_once()
+        with patch("antigravity_plugin_entry.client.resolve_agy_command", return_value="fixture-agy"), patch.object(_pkg.subprocess, "run", side_effect=subprocess.TimeoutExpired(["agy", "models"], 4)):
+            self.assertEqual(provider_model_ids(profile.name, force_refresh=True), [])
 
     def test_profile_get_model_context_length(self):
         profile = get_provider_profile("antigravity-oauth-plus")
-        with patch.dict(os.environ, {"ANTIGRAVITY_CONTEXT_LENGTH": ""}):
-            self.assertIsNone(profile.get_model_context_length("gemini-3.8-flash"))
-            self.assertIsNone(profile.get_model_context_length("gemini-3.1-pro"))
-            self.assertIsNone(profile.get_model_context_length("claude-sonnet-4-6"))
+        assert profile is not None
+        with patch.dict(os.environ):
+            os.environ.pop("ANTIGRAVITY_CONTEXT_LENGTH", None)
+            for model in ("gemini-3.8-flash-high", "claude-opus-5-5-high", "claude-sonnet-5-5-high", "orion-2-reasoner-max"):
+                self.assertIsNone(profile.get_model_context_length(model))
+        with patch.dict(os.environ, {"ANTIGRAVITY_CONTEXT_LENGTH": " 250000 "}):
+            for model in _CLI_MODEL_IDS:
+                self.assertEqual(profile.get_model_context_length(model), 250_000)
 
-        # Test env override
-        with patch.dict(os.environ, {"ANTIGRAVITY_CONTEXT_LENGTH": "250000"}):
-            self.assertEqual(profile.get_model_context_length("gemini-3.8-flash"), 250_000)
+    def test_profile_context_length_invalid_override_defers(self):
+        profile = get_provider_profile("antigravity-oauth-plus")
+        assert profile is not None
+        for value in ("", " ", "invalid", "0", "-1"):
+            with self.subTest(value=value), patch.dict(os.environ, {"ANTIGRAVITY_CONTEXT_LENGTH": value}):
+                self.assertIsNone(profile.get_model_context_length("gemini-3.8-flash-high"))
+
+    def test_gpt_oss_effort_context_uses_native_catalog_not_generic_fallback(self):
+        from agent import models_dev
+
+        profile = get_provider_profile("antigravity-oauth-plus")
+        assert profile is not None
+        canonical = "openai/gpt-oss-120b"
+        exact = "openai/gpt-oss-120b-medium"
+        # Synthetic metadata distinguishes use of the catalog from a hardcoded capacity.
+        entries: dict[str, object] = {canonical: {"limit": {"context": 123456}}}
+        registry = {"openrouter": {"models": entries}}
+        with patch.dict(os.environ):
+            os.environ.pop("ANTIGRAVITY_CONTEXT_LENGTH", None)
+            with patch.object(models_dev, "fetch_models_dev", return_value=registry) as lookup:
+                self.assertEqual(profile.get_model_context_length("gpt-oss-120b-medium"), 123456)
+                lookup.assert_called_once_with(allow_network=False)
+            entries[exact] = {"limit": {"context": 65432}}
+            with patch.object(models_dev, "fetch_models_dev", return_value=registry):
+                self.assertEqual(profile.get_model_context_length("gpt-oss-120b-medium"), 65432)
+            for entry in ({}, None, {"limit": {"context": 0}}, {"limit": {"context": -1}}, {"limit": {"context": True}}, {"limit": {"context": "123456"}}):
+                entries[exact] = entry
+                with self.subTest(entry=entry), patch.object(models_dev, "fetch_models_dev", return_value=registry):
+                    # An existing but invalid variant must not inherit the larger base window.
+                    self.assertIsNone(profile.get_model_context_length("gpt-oss-120b-medium"))
+            with patch.object(models_dev, "fetch_models_dev", side_effect=OSError("fixture unavailable catalog")):
+                self.assertIsNone(profile.get_model_context_length("gpt-oss-120b-medium"))
+
+    def test_gpt_oss_context_requires_a_real_catalog_entry(self):
+        from agent import models_dev
+
+        profile = get_provider_profile("antigravity-oauth-plus")
+        assert profile is not None
+        # get_model_info can synthesize limits from a plugin declaration on a
+        # catalog miss. That is not a verified public native catalog window.
+        synthetic = SimpleNamespace(id="openai/gpt-oss-120b-medium", context_window=999999)
+        with patch.dict(os.environ):
+            os.environ.pop("ANTIGRAVITY_CONTEXT_LENGTH", None)
+            with patch.object(models_dev, "fetch_models_dev", return_value={}), patch.object(models_dev, "get_model_info", return_value=synthetic):
+                self.assertIsNone(profile.get_model_context_length("gpt-oss-120b-medium"))
 
     def test_profile_classify_api_error(self):
         profile = get_provider_profile("antigravity-oauth-plus")

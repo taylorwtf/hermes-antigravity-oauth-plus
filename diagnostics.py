@@ -25,8 +25,9 @@ except ImportError:
 
 PROVIDER = "antigravity-oauth-plus"
 ALIASES = {PROVIDER, "agy-oauth-plus", "google-antigravity-plus"}
-ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}")
-CATALOG_ID = re.compile(r"[a-z0-9][a-z0-9._-]*-[a-z0-9][a-z0-9._-]*")
+ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}")
+CATALOG_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]*")
+_DIAGNOSTIC_IDS = {"error", "warning", "failed", "failure"}
 VERSION = re.compile(r"\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]{1,40})?")
 MAX_BYTES = 1024 * 1024
 CATALOG_FRESH_SECONDS = 3600
@@ -120,7 +121,7 @@ def read_catalog():
     except (ValueError, UnicodeError):
         raise DiagnosticError("CATALOG_STATE_INVALID") from None
     ids = value.get("model_ids") if isinstance(value, dict) else None
-    if not isinstance(ids, list) or not ids or any(not isinstance(x, str) or not CATALOG_ID.fullmatch(x) or len(x) > 128 for x in ids) or len(ids) != len(set(ids)):
+    if not isinstance(ids, list) or not ids or any(not isinstance(x, str) or not CATALOG_ID.fullmatch(x) or x.lower().rstrip(":") in _DIAGNOSTIC_IDS or len(x) > 128 for x in ids) or len(ids) != len(set(ids)):
         raise DiagnosticError("CATALOG_STATE_INVALID")
     parse_time(value.get("observed_at"))
     version = value.get("agy_version")
@@ -153,7 +154,7 @@ def parse_complete_catalog(text):
         if re.fullmatch(r"(?i)(?:model(?:\s+id)?)(?:\s+(?:name|description|family))?", line):
             continue
         model_id = line.split()[0]
-        if len(model_id) > 128 or not CATALOG_ID.fullmatch(model_id):
+        if len(model_id) > 128 or not CATALOG_ID.fullmatch(model_id) or model_id.lower().rstrip(":") in _DIAGNOSTIC_IDS:
             # Unknown/truncated output must not masquerade as removals.
             raise DiagnosticError("CATALOG_INCOMPLETE")
         ids.add(model_id)
@@ -235,7 +236,7 @@ def build_status(config, model=None, effort=None, catalog=None):
     if catalog is None or executable_id not in catalog["model_ids"]:
         warnings.append("MODEL_NOT_OBSERVED_IN_CACHED_CATALOG")
     return {
-        "ok": True, "provider": PROVIDER, "plugin_version": "0.2.0",
+        "ok": True, "provider": PROVIDER, "plugin_version": "0.2.1",
         "agy_version": catalog.get("agy_version") if catalog else None,
         "agy_version_source": "cached-refresh-metadata" if catalog and catalog.get("agy_version") else "unknown",
         "requested_model": requested, "requested_effort": selected_effort,
@@ -269,8 +270,8 @@ def render(value):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", nargs="?", choices=("status", "refresh-models"), default="status")
-    parser.add_argument("--model", help="Exact model ID/shorthand; required when another provider is configured")
-    parser.add_argument("--effort", choices=("low", "medium", "high"))
+    parser.add_argument("--model", help="Exact model ID; required when another provider is configured")
+    parser.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"))
     parser.add_argument("--json", action="store_true", help="Sanitized bug-report export; never raw config/auth/process output")
     args = parser.parse_args(argv)
     rc = 0
